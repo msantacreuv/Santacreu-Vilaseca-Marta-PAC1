@@ -1,0 +1,221 @@
+---
+title: "Codi PAC 1"
+author: "Marta Santacreu"
+date: "2025-03-28"
+output: html_document
+---
+
+### 0. Paquets emprats
+
+```{r}
+BiocManager::install() #instal·lem Bioconductor
+BiocManager::install("SummarizedExperiment") #descarreguem el paquet de Bioconductor per poder utilizar l'objecte SummarizedExperiment
+
+#Per als paquets que no instal·lem des de bioconductor comprovarem si els tenim prèviament i si no els instal·larem. Al llarg del codi si trobem que ens en falta un l'afegirem .
+
+if (!require("pacman")) install.packages("pacman") #instal·lem el paquet pacman que ens ajudarà a comprovar si tenim o no els paquets i a instal·lar-los quan faltin. 
+pacman::p_load(dplyr, ggplot2, skimr, knitr)
+                                          
+                                          
+#carreguem els paquets
+library(SummarizedExperiment) #per utiltizar la classe
+library(dplyr) #per a manipulació de dades
+library(skimr) #fer resum de les dades
+library(knitr) #per mostrar taules
+library(ggplot2) #per a gràfics 
+library(pheatmap) #per fer heatmaps
+```
+
+### 1. Carregar dades
+
+```{r}
+#Primer carreguem les dades del dataset human_cachexia.csv
+data <- read.csv("C:/Users/quals/Desktop/Master/Segon semestre/Analisis de dades omiques/PAC 1/dataset/human_cachexia.csv")
+
+#per veure les dades i la seve estructura mirem les primeres files:
+head(data)
+```
+
+### 2. Incorporació dades al objecte summarizedExperiment
+
+```{r}
+
+#1r. Per fer la matriu necessitem que les columnes siguin els pacients i les files els metabòlits:
+matriu <- as.matrix( data[,3:ncol(data)]) #treiem les primeres dues columnes de metadades i guardem com a matriu utilitzant as.matrix. 
+matriu <- t(matriu) # transposem la matriu amb t() i ara ja ho tenim amb el format que necessitem
+
+#2n. Per a les metadades dels pacients farem el dataframe directament amb les primeres dues columnes, recordem que les columnes del assay han de coincidir amb les files de colData.
+metadades <- data.frame(data[, c(1,2), drop = F])
+
+#3r. Guardem els ID dels pacients com a nom de les samples tant en la matriu com en metadades i despres esborrem la columna de metadades per no tindré informació redundant
+colnames(matriu) <- metadades$Patient.ID
+rownames(metadades)<- metadades$Patient.ID
+
+metadades <- metadades%>%
+  dplyr::select(-Patient.ID)
+
+#4t. En aquest cas no farem rowData perquè no tenim informació addicional de les features, per tant podem ja començar a crear l'objecte
+
+objecte_SE <- SummarizedExperiment( #fem servir el constructor de la classe
+  assays = list(matriu), #assays hem d'entrar una llista amb els objectes, en aquest cas nomes en tenim un però podriem tenir-ne més i s'haurien d'afegir en aquesta.
+  colData = metadades #ja tenim el dataframe creat amb les metadades dels pacietns i ho guardem en colData
+  
+)
+```
+
+### 3. Anàlisis exploratòria de les dades
+
+#### 3.1. Observació inicial de les dades
+
+Comencem fent un resum previ de les dades per inspeccionar com funciona l'objecte que hem creat:
+
+```{r}
+#Comprovem que l'objecte s'ha creat correctament
+objecte_SE
+
+#Obtenim un resum de les metadades
+colData(objecte_SE)
+
+```
+
+#### 3.2. Estadístiques descriptives
+
+Per obtenir un resum de les estadístiques descriptives del dataset utilitzaré la funció **skim()** (del paquet *skimr*). Ens serviria també fer **summary()** però amb la primera també obtenim una visualització molt esquemàtica de la distribució de les dades en format histograma així com una idea dels valors nul·ls. La funció skim() treballa amb les columnes per tant transposarem *assay* per a que ens faci l'estadística dels metabòlits (files).
+
+```{r}
+
+est_descriptives <-skim(t(assay(objecte_SE))) #Ho fem al assay (matriu de dades)
+kable(est_descriptives, format = "markdown")
+```
+
+Amb el **skim()** veiem que no hi ha cap NA. La major part de les mesures dels metabòlits es troben concentrades en rangs baixos amb alguns valors extrems, suggerint possibles *outliers.* Per tal de comprovar això podem fer un boxplot de l'assay per veure els valors extrems:
+
+```{r}
+boxplot(t(assay(objecte_SE)),
+        main = "Distribució concentració metabòlits", 
+        las = 2, 
+        pch =19,
+        cex.axis = 0.5) #comque tenim molts metabòlits farem que coloqui les etiquetes de l'eix X en vertical per facilitar la lectura i en reduirem la mida
+```
+
+Com que ens ha cridat especialment l'atenció la creatinina l'investigarem més en detall fent un histograma per veure la seva distribució:
+
+```{r}
+#utilitzem la funció hist amb creatinina
+hist(assay(objecte_SE)["Creatinine",],
+     main = "Distribució Creatinina",
+     xlab = "Nivell d'expressió",
+     col = "lightblue4")
+```
+
+Fins ara nomès hem mirat les dades en conjunt, però no podem oblidar que a les metadades (colData) tenim la informació sobre a quin grup pertanyen les nostres mostres (control o caquexia) per tant anem a repetir el procès separant per grup.
+
+```{r}
+grup <- colData(objecte_SE)
+
+#filtrem per grup les dades de assay
+df_control <- t(assay(objecte_SE)[, grup$Muscle.loss == "control"])
+df_caquexia <- t(assay(objecte_SE)[,grup$Muscle.loss == "cachexic"])
+
+#fem el skim() de cada gruo
+skim_ctl <- skim(df_control)
+skim_caquexia <- skim(df_caquexia)
+
+#ho podem visualtizar així
+kable(skim_ctl, format = "markdown")
+kable(skim_caquexia, format = "markdown")
+```
+
+Podem repetir també el boxplot general per els dos grups:
+
+```{r}
+boxplot(df_control, 
+        main = "Distribució concentració metabòlits CTL", 
+        las = 2, 
+        pch =19,
+        cex.axis = 0.5)
+
+boxplot(df_caquexia, 
+        main = "Distribució concentració metabòlits caquèxia", 
+        las = 2, 
+        pch =19,
+        cex.axis = 0.5)
+```
+
+Ara aquests metabòlits que hem vist especialment elevats en els grups els observarem més en detall:
+
+```{r}
+
+#1r. Seleccionem els metabòlits d'interès
+metabolits_interes <- c("Creatinine", "Hippurate", "Citrate", "Glucose", "Glycine")
+
+#2n. guardem els noms dels metabòlits desde assay
+metabolits_data <- assays(objecte_SE)[[1]] 
+
+#3r. I els grups des de colData
+grups <- colData(objecte_SE)$Muscle.loss  
+
+#4t. Filtrem els metabòlits totals segons els nostres metabòlits d'interès. 
+metabolits_filtrats <- metabolits_data[metabolits_interes, ]
+
+#5e. Ho passem a format long per a la representació (transposant els metabòlits filtrats i afegim la columna grup per poder-los separar).
+metabolits_long <- as.data.frame(t(metabolits_filtrats))
+metabolits_long$grup <- grups
+
+metabolits_long <- metabolits_long %>%
+  gather(key = "metabolit", value = "valor", -grup)
+
+#6e. Grafiquem els diferents boxplots i utilitzem facet_wrap per dividir el gràfic en subgràfics (un per cada metabòlit) 
+ggplot(metabolits_long, aes(x = grup, y = valor, fill = grup)) +
+  geom_boxplot() +
+  facet_wrap(~metabolit, scales = "free_y") + 
+  labs(title = "Distribució metabòlits Control vs Caquexia",
+       x = "Grup",
+       y = "Concentració metabòlits") +
+  theme_minimal()
+#el guardem per adjuntar-lo a l'informe
+ggsave("boxplot_metabolits.png", width = 7, height = 7, dpi = 300)
+```
+
+#### 3.3. Interaccions i  Correlacions
+
+Per observar com es comporten les dades segons els grups farme un PCA (Anàlisis de Components Principals).
+
+```{r}
+
+
+#1r. Transposem les dades dels metabòlits 
+metabolits_data <- t(metabolits_data)
+
+#2n. Utilitzem la funció prcomp() per fer el pca
+pca <- prcomp(metabolits_data, center = TRUE, scale. = TRUE)
+
+#3r. Visualitzem el PCA
+pca_data <- as.data.frame(pca$x) #pca$x conté les puntuacions dels pacients en l'espai dels components principals.
+#afegim els grups a les dades. 
+pca_data$grup <- colData(objecte_SE)$Muscle.loss
+#representem els dos components principals del PCA. 
+ggplot(pca_data, aes(x = PC1, y = PC2, color = grup)) +
+  geom_point() +
+  labs(title = "PCA de Metabòlits entre Grups", x = "CP 1", y = "CP2") +
+  theme_minimal()
+
+
+```
+
+Per seguir amb el nostre analisis exploratori, farem un heatmap amb la funció **pheatmap()** de la llibreria homonima.
+
+```{r}
+
+pheatmap(cor(df_control), #indiquem les correlacions que s'han de mirar (en aquest cas el grup caquexia)
+         main = "Heatmap CTL",
+         show_colnames = F, 
+         color = colorRampPalette(c("blue", "white", "red"))(50),
+         fontsize = 6)
+  
+pheatmap(cor(df_caquexia),  #indiquem les correlacions que s'han de mirar (en aquest cas el grup control)
+         main = "Heatmap Caquexic",
+         show_colnames = F, 
+         color = colorRampPalette(c("blue", "white", "red"))(50),
+         fontsize = 6)
+```
